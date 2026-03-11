@@ -1,0 +1,17 @@
+[package]
+name = "rust-ssl-api"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+axum = "0.7"
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "mysql", "macros"] }
+tokio = { version = "1", features = ["full"] }
+dotenv = "0.15"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+jsonwebtoken = "9"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+sha1 = "0.10"         # ✅ SHA1
+hex = "0.4"           # ✅ converts hash to hex string
