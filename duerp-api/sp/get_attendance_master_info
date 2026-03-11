@@ -1,0 +1,69 @@
+CREATE OR REPLACE FUNCTION ictcell.get_attendance_master_info(
+    p_class_id TEXT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+AS $BODY$
+DECLARE 
+    attendance_info RECORD;
+BEGIN
+    -- Validate input parameter
+    IF p_class_id IS NULL OR p_class_id = '' THEN
+        RETURN jsonb_build_object(
+            'status', 'ERROR',
+            'message', 'Class ID is required',
+            'data', NULL
+        );
+    END IF;
+    
+    -- Get attendance master information
+    SELECT
+        am.id,
+        am.attendance_date,
+        am.start_time,
+        am.end_time,
+        am.course_operation_id,
+        op.start_date,
+        op.end_date,
+        op.course_year,
+        op.course_section,
+        op.course_semester,
+        c.title AS course_title,
+        c.code AS course_code,
+        p.name AS program_name,
+        ld.name AS department_name,
+        lf.name AS faculty_name
+    INTO attendance_info 
+    FROM ictcell.lms_attendance_master am
+    INNER JOIN ictcell.lms_course_operation op ON op.id = am.course_operation_id
+    INNER JOIN ictcell.lms_course c ON op.course_id = c.id
+    INNER JOIN ictcell.lms_program p ON op.program_id = p.id
+    INNER JOIN ictcell.lms_faculty lf ON op.faculty_id = lf.id
+    INNER JOIN ictcell.lms_faculty_dept lfd ON lfd.faculty_id = lf.id
+    INNER JOIN ictcell.lms_department ld ON lfd.dept_id = ld.id
+    WHERE am.id::TEXT = p_class_id;
+    
+    -- Check if record was found
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object(
+            'status', 'ERROR',
+            'message', 'No attendance master record found for the given class ID',
+            'data', NULL
+        );
+    END IF;
+    
+    -- Return success with data
+    RETURN jsonb_build_object(
+        'status', 'SUCCESS',
+        'message', 'Successfully retrieved attendance master information',
+        'data', row_to_json(attendance_info)::jsonb
+    );
+EXCEPTION
+    WHEN OTHERS THEN
+        RETURN jsonb_build_object(
+            'status', 'ERROR',
+            'message', 'Failed to retrieve attendance master info: ' || SQLERRM,
+            'data', NULL
+        );
+END;
+$BODY$;

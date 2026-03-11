@@ -1,0 +1,90 @@
+
+DECLARE
+    v_master_id     TEXT;
+	v_course_operation_id TEXT;
+    v_item          JSONB;
+    v_updated_count INTEGER := 0;
+    v_inserted_count INTEGER := 0;
+    v_exists        BOOLEAN;
+BEGIN
+    -- Find attendance master
+    SELECT id,course_operation_id INTO v_master_id,v_course_operation_id
+    FROM ictcell.lms_attendance_master
+    WHERE course_operation_id = p_course_operation_id
+      AND attendance_date = p_attendance_date
+      AND start_time = p_start_time
+      AND end_time   = p_end_time
+    LIMIT 1;
+
+    IF v_master_id IS NULL THEN
+        RETURN jsonb_build_object(
+            'status', 'error',
+            'message', 'Attendance session not found'
+        );
+    END IF;
+
+    -- UPSERT attendance rows
+    FOR v_item IN
+        SELECT * FROM jsonb_array_elements(p_attendance)
+    LOOP
+        -- Check if record exists
+        SELECT EXISTS (
+            SELECT 1
+            FROM ictcell.lms_class_attendance
+            WHERE attendance_master_id = v_master_id
+              AND student_id = v_item->>'std_id'
+        ) INTO v_exists;
+
+        IF v_exists THEN
+            -- ✅ UPDATE
+            UPDATE ictcell.lms_class_attendance
+            SET
+                revised_present = (v_item->>'is_present')::SMALLINT,
+                action_ip       = p_client_ip,
+                action_by       = p_user_id
+            WHERE attendance_master_id = v_master_id
+              AND student_id = v_item->>'std_id';
+
+            v_updated_count := v_updated_count + 1;
+        ELSE
+            -- ✅ INSERT
+            INSERT INTO ictcell.lms_class_attendance (
+				id,
+                attendance_master_id,
+				course_operation_id,
+                student_id,
+                revised_present,
+                action_ip,
+                action_by
+            ) VALUES (
+				gen_random_uuid()::TEXT,
+                v_master_id,
+				v_course_operation_id,
+                v_item->>'std_id',
+                (v_item->>'is_present')::SMALLINT,
+                p_client_ip,
+                p_user_id
+            );
+
+			
+
+            v_inserted_count := v_inserted_count + 1;
+        END IF;
+
+    END LOOP;
+
+    RETURN jsonb_build_object(
+        'status',               'success',
+        'message',              'Attendance updated successfully',
+        'attendance_master_id', v_master_id,
+        'updated_students',     v_updated_count,
+        'inserted_students',    v_inserted_count
+    );
+
+EXCEPTION
+    WHEN OTHERS THEN
+        RETURN jsonb_build_object(
+            'status',  'error',
+            'message', SQLERRM
+        );
+END;

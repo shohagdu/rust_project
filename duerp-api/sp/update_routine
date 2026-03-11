@@ -1,0 +1,124 @@
+CREATE OR REPLACE FUNCTION ictcell.course_operation_routine_update(
+    p_course_operation  TEXT,
+    p_routine           JSONB,
+    p_updated_at        TIMESTAMPTZ DEFAULT NOW(),
+    p_updated_by        TEXT        DEFAULT NULL,
+    p_updated_ip        TEXT        DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+AS $BODY$
+DECLARE
+    v_routine_item  JSONB;
+    v_total_updated INT := 0;
+    v_total_inserted INT := 0;
+    v_total_deactivated INT := 0;
+    v_row_count     INT;
+    v_exists        BOOLEAN;
+BEGIN
+    -- =====================================================
+    -- STEP 1: UPSERT — JSON array তে যা আছে সেগুলো
+    -- =====================================================
+    FOR v_routine_item IN
+        SELECT jsonb_array_elements(p_routine)
+    LOOP
+        -- Check if this day's routine exists in DB
+        SELECT EXISTS (
+            SELECT 1
+            FROM ictcell.lms_class_routine
+            WHERE course_operation_id = p_course_operation
+              AND day_name = v_routine_item->>'day'
+        ) INTO v_exists;
+
+        IF v_exists THEN
+            -- ✅ UPDATE: DB তে আছে
+            UPDATE ictcell.lms_class_routine
+            SET
+                start_time = (v_routine_item->>'start_time')::TIME,
+                end_time   = (v_routine_item->>'end_time')::TIME,
+                room       = v_routine_item->>'room',
+                is_active  = 1,
+                updated_at = p_updated_at,
+                updated_by = p_updated_by,
+                updated_ip = p_updated_ip
+            WHERE
+                course_operation_id = p_course_operation
+                AND day_name = v_routine_item->>'day';
+
+            GET DIAGNOSTICS v_row_count = ROW_COUNT;
+            v_total_updated := v_total_updated + v_row_count;
+
+        ELSE
+            -- ✅ INSERT: DB তে নেই
+            INSERT INTO ictcell.lms_class_routine (
+				id,
+                course_operation_id,
+                day_name,
+                start_time,
+                end_time,
+                room,
+                is_active,
+                created_at,
+                created_by,
+                created_ip
+            ) VALUES (
+				gen_random_uuid()::TEXT,
+                p_course_operation,
+                v_routine_item->>'day',
+                (v_routine_item->>'start_time')::TIME,
+                (v_routine_item->>'end_time')::TIME,
+                v_routine_item->>'room',
+                1,
+                p_updated_at,
+                p_updated_by,
+                p_updated_ip
+            );
+
+            GET DIAGNOSTICS v_row_count = ROW_COUNT;
+            v_total_inserted := v_total_inserted + v_row_count;
+        END IF;
+
+    END LOOP;
+
+    -- =====================================================
+    -- STEP 2: SOFT DELETE — DB তে আছে কিন্তু JSON এ নেই
+    -- =====================================================
+    UPDATE ictcell.lms_class_routine
+    SET
+        is_active  = 0,
+        updated_at = p_updated_at,
+        updated_by = p_updated_by,
+        updated_ip = p_updated_ip
+    WHERE
+        course_operation_id = p_course_operation
+        AND day_name NOT IN (
+            SELECT jsonb_array_elements(p_routine)->>'day'
+        );
+
+    GET DIAGNOSTICS v_row_count = ROW_COUNT;
+    v_total_deactivated := v_total_deactivated + v_row_count;
+
+    -- =====================================================
+    -- STEP 3: RETURN RESULT
+    -- =====================================================
+    RETURN jsonb_build_object(
+        'status',  'SUCCESS',
+        'message', 'Routine sync completed successfully',
+        'data', jsonb_build_object(
+            'course_operation_id', p_course_operation::TEXT,
+            'inserted',            v_total_inserted,
+            'updated',             v_total_updated,
+            'deactivated',         v_total_deactivated
+        )
+    );
+
+EXCEPTION
+    WHEN OTHERS THEN
+        RETURN jsonb_build_object(
+            'status',  'ERROR',
+            'message', 'Failed to sync routine: ' || SQLERRM,
+            'data',    NULL
+        );
+END;
+$BODY$;
+

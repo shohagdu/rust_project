@@ -1,0 +1,58 @@
+CREATE OR REPLACE FUNCTION ictcell.lecture_record_by_course_opeation(
+	p_course_operation_id TEXT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+AS $BODY$
+DECLARE
+    v_lecture_list JSONB;
+	v_lecture_count INTEGER;
+BEGIN
+    -- Validate input parameter
+    IF p_course_operation_id IS NULL OR p_course_operation_id = '' THEN
+        RETURN jsonb_build_object(
+            'status', 'ERROR',
+            'message', 'Course Operation ID is required',
+            'data', NULL
+        );
+    END IF;
+   -- Get all attendance records with student details
+    SELECT 
+        jsonb_agg(
+            jsonb_build_object(
+                'id', lec.id,
+                'lecture_date', lec.lecture_date,
+                'title', lec.title,
+                'links', lec.links,
+                'attachment_file', lec.attachment_file
+            ) ORDER BY lec.lecture_date ASC
+        ),
+        COUNT(*)
+    INTO v_lecture_list, v_lecture_count
+    FROM ictcell.lms_lectures lec
+    WHERE lec.id::TEXT = p_course_operation_id;
+    
+    -- Check if any records were found
+    IF v_lecture_list IS NULL OR v_lecture_count = 0 THEN
+        RETURN jsonb_build_object(
+            'status', 'ERROR',
+            'message', 'No Lecture records found for the given course operation',
+            'data', jsonb_build_array()
+        );
+    END IF;
+    
+    -- Return success with all records
+    RETURN jsonb_build_object(
+        'status', 'SUCCESS',
+        'message', format('Successfully retrieved %s lecture record(s)', v_lecture_count),
+        'data', v_lecture_list
+    );
+EXCEPTION
+    WHEN OTHERS THEN
+        RETURN jsonb_build_object(
+            'status', 'ERROR',
+            'message', 'Failed to retrieve lecture records: ' || SQLERRM,
+            'data', NULL
+        );
+END;
+$BODY$;

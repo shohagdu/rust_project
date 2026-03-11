@@ -1,0 +1,79 @@
+CREATE OR REPLACE FUNCTION ictcell.get_attendance_master_info_by_coid_date(
+    p_course_operation_id TEXT,
+    p_attendance_date     DATE
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+AS $BODY$
+DECLARE
+    attendance_info RECORD;
+BEGIN
+    
+    IF p_course_operation_id IS NULL OR TRIM(p_course_operation_id) = '' OR
+       p_attendance_date IS NULL
+    THEN
+        RETURN jsonb_build_object(
+            'status',  'ERROR',
+            'message', 'Course Operation ID & Date is required',
+            'data',    NULL
+        );
+    END IF;
+
+   
+    SELECT
+        am.id,
+        am.attendance_date,
+        am.start_time,
+        am.end_time,
+        am.course_operation_id,
+        op.start_date,
+        op.end_date,
+        op.course_year,
+        op.course_section,
+        op.course_semester,
+        c.title  AS course_title,
+        c.code   AS course_code,
+        p.name   AS program_name,
+        ld.name  AS department_name,
+        lf.name  AS faculty_name
+    INTO attendance_info
+    FROM ictcell.lms_attendance_master am
+    INNER JOIN ictcell.lms_course_operation op  ON op.id          = am.course_operation_id
+    INNER JOIN ictcell.lms_course           c   ON c.id           = op.course_id
+    INNER JOIN ictcell.lms_program          p   ON p.id           = op.program_id
+    INNER JOIN ictcell.lms_faculty          lf  ON lf.id          = op.faculty_id
+    -- ✅ Subquery isolates ONE department per faculty to avoid row duplication
+    INNER JOIN (
+        SELECT DISTINCT ON (faculty_id) faculty_id, dept_id
+        FROM ictcell.lms_faculty_dept
+        ORDER BY faculty_id
+    ) lfd                                        ON lfd.faculty_id = lf.id
+    INNER JOIN ictcell.lms_department       ld  ON ld.id          = lfd.dept_id
+    WHERE am.course_operation_id::TEXT = p_course_operation_id
+      AND am.attendance_date           = p_attendance_date;   -- ✅ DATE = DATE, no cast needed
+
+    -- Check if record was found
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object(
+            'status',  'ERROR',
+            'message', 'No attendance master record found for the given Course Operation ID and Date',
+            'data',    NULL
+        );
+    END IF;
+
+    -- Return success with data
+    RETURN jsonb_build_object(
+        'status',  'SUCCESS',
+        'message', 'Successfully retrieved attendance master information',
+        'data',    row_to_json(attendance_info)::jsonb
+    );
+
+EXCEPTION
+    WHEN OTHERS THEN
+        RETURN jsonb_build_object(
+            'status',  'ERROR',
+            'message', 'Failed to retrieve attendance master info: ' || SQLERRM,
+            'data',    NULL
+        );
+END;
+$BODY$;

@@ -1,0 +1,36 @@
+--- Start -- Lecture Upload 
+SELECT ictcell.lecture_store(
+    '04b81bd7-ed95-4676-90e1-7d6182a40ec5',
+    '2025-02-25',
+    'About Test Topice Title',
+    '["www.youbutb.com","www.google.com"]'::jsonb,
+    '[{"file_name":"lecture2.pdf","file_url":"https://cdn.example.com/lecture2.pdf"}]'::jsonb,
+    '2026-02-25 10:00:10',
+    '154411-4511',
+    '127.0.0.1'
+);
+
+
+SELECT ictcell.lecture_record_by_course_opeation(
+    'c57f1ad5-12d0-4e61-9e83-3dddac90d855'
+);
+
+SELECT ictcell.lecture_delete(
+    '0889723f-b57d-40c8-a9fb-2686d56db2a4'
+);
+
+
+SELECT ictcell.lecture_update(
+    '169d2860-593a-4df1-b7c8-d3304aef3e3b',
+    '04b81bd7-ed95-4676-90e1-7d6182a40ec5',
+    '2026-02-20',
+    'Advanced SQL',
+    '["www.youbutb.com","www.google.com"]'::jsonb,
+    '[{"file_name":"lecture2.pdf","file_url":"https://cdn.example.com/lecture2.pdf"}]'::jsonb,
+    '2026-02-25 10:00:10',
+    'admin',
+    '192.168.1.10'
+);
+
+
+--- END -- Lecture Upload 

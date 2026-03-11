@@ -1,0 +1,91 @@
+
+DECLARE
+    v_exists TEXT;
+    v_master_id TEXT;
+    v_item JSONB;
+    v_total_students INTEGER := 0;
+BEGIN
+    -- Validate time range
+    IF p_start_time >= p_end_time THEN
+        RETURN jsonb_build_object(
+            'status', 'error',
+            'message', 'Start time must be earlier than end time'
+        );
+    END IF;
+
+    -- Overlapping attendance check
+    SELECT id INTO v_exists
+    FROM ictcell.lms_attendance_master
+    WHERE course_operation_id = p_course_operation_id
+      AND attendance_date = p_attendance_date
+      AND start_time < p_end_time
+      AND end_time   > p_start_time
+    LIMIT 1;
+
+    IF v_exists IS NOT NULL THEN
+        RETURN jsonb_build_object(
+            'status', 'error',
+            'message', 'Attendance already exists for this course, date, and time range'
+        );
+    END IF;
+
+    -- Insert master record
+    v_master_id := gen_random_uuid()::TEXT;
+
+    INSERT INTO ictcell.lms_attendance_master (
+        id,
+        course_operation_id,
+        attendance_date,
+        start_time,
+        end_time
+    )
+    VALUES (
+        v_master_id,
+        p_course_operation_id,
+        p_attendance_date,
+        p_start_time,
+        p_end_time
+    );
+
+    -- Insert attendance details
+    FOR v_item IN
+        SELECT * FROM jsonb_array_elements(p_attendance)
+    LOOP
+        INSERT INTO ictcell.lms_class_attendance (
+            id,
+            attendance_master_id,
+            course_operation_id,
+            student_id,
+            is_present,
+            revised_present,
+            action_ip,
+            action_by
+        )
+        VALUES (
+            gen_random_uuid()::TEXT,
+            v_master_id,
+            p_course_operation_id,
+            v_item->>'std_id',
+            (v_item->>'is_present')::SMALLINT,
+            (v_item->>'is_present')::SMALLINT,
+            p_client_ip,
+            p_user_id
+        );
+
+        v_total_students := v_total_students + 1;
+    END LOOP;
+
+    RETURN jsonb_build_object(
+        'status', 'success',
+        'message', 'Attendance stored successfully',
+        'master_id', v_master_id,
+        'total_students', v_total_students
+    );
+
+EXCEPTION
+    WHEN OTHERS THEN
+        RETURN jsonb_build_object(
+            'status', 'error',
+            'message', SQLERRM
+        );
+END;

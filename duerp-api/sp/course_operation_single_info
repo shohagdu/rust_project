@@ -1,0 +1,100 @@
+CREATE OR REPLACE FUNCTION ictcell.course_operation_get_single(
+	 p_co_id  TEXT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+AS $BODY$
+DECLARE 
+    v_course_exists BOOLEAN;
+    v_course_info RECORD;
+	v_course_class_routine JSONB;
+BEGIN
+    -- Validate input parameter
+    IF p_co_id IS NULL OR p_co_id = '' THEN
+        RETURN jsonb_build_object(
+            'status', 'ERROR',
+            'message', 'Course operation ID is required',
+            'data', NULL
+        );
+    END IF;
+
+    -- Check if course operation exists
+    SELECT EXISTS(
+        SELECT 1 
+        FROM ictcell.lms_course_operation  
+        WHERE id::TEXT = p_co_id
+    ) INTO v_course_exists;
+    
+    IF NOT v_course_exists THEN
+        RETURN jsonb_build_object(
+            'status', 'ERROR',
+            'message', 'Course operation not found',
+            'data', NULL
+        );
+    END IF;
+
+	SELECT
+            co.id,
+            co.course_id,
+            co.program_id,
+            co.faculty_id,
+            co.course_year,
+            co.course_section,
+            co.course_semester,
+            co.course_outline,
+            co.book_reference,
+            c.code AS course_code,
+            c.title AS course_title,
+            p.name AS program_name,
+            p.level AS program_level,
+            p.dept_id AS department_id,
+            f.name AS faculty_name,
+            d.name as department_name
+		INTO v_course_info	
+        FROM ictcell.lms_course_operation co 
+        INNER JOIN ictcell.lms_course c ON co.course_id = c.id
+        INNER JOIN ictcell.lms_program p ON co.program_id = p.id
+        INNER JOIN ictcell.lms_department d ON p.dept_id = d.id
+        INNER JOIN ictcell.lms_faculty f ON co.faculty_id = f.id
+        WHERE co.id::TEXT = p_co_id;
+
+		--GET Class Routine
+		SELECT 
+		jsonb_agg(
+            jsonb_build_object(
+                'id', id,
+                'course_operation_id', course_operation_id,
+                'day_name', day_name,
+                'start_time', start_time,
+                'end_time',end_time,
+                'room', room
+            ) ORDER BY id ASC
+        )
+		INTO v_course_class_routine
+		FROM ictcell.lms_class_routine 
+		where is_active=1 and course_operation_id::TEXT=p_co_id;
+
+   -- SELECT row_to_json(co)::JSONB INTO v_course_info
+   -- FROM ictcell.lms_course_operation co
+   -- WHERE id::TEXT = p_co_id;
+
+    
+    
+    -- Return success response
+    RETURN jsonb_build_object(
+        'status', 'SUCCESS',
+        'message', 'Course operation successfully Found',
+        'data', row_to_json(v_course_info)::jsonb,
+		'class_routine',v_course_class_routine
+    );
+
+EXCEPTION
+    WHEN OTHERS THEN
+        RETURN jsonb_build_object(
+            'status', 'ERROR',
+            'message', 'Failed to get course operation: ' || SQLERRM,
+            'data', NULL
+        );
+END;
+$BODY$;
+

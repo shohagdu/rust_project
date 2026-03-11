@@ -1,0 +1,89 @@
+CREATE OR REPLACE FUNCTION ictcell.get_attendance_by_coId_date(
+    p_course_operation_id TEXT,
+    p_attendance_date     DATE
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+AS $BODY$
+DECLARE
+    v_student_list  JSONB;
+    v_record_count  INTEGER;
+    v_master_info   JSONB;
+BEGIN
+   
+    IF p_course_operation_id IS NULL OR TRIM(p_course_operation_id) = '' OR
+       p_attendance_date IS NULL
+    THEN
+        RETURN jsonb_build_object(
+            'status',                'ERROR',
+            'message',               'Course Operation ID & Date is required',
+            'data',                  NULL,
+            'attendance_master_info', NULL
+        );
+    END IF;
+
+    -- Get attendance master information using the separate function
+    v_master_info := ictcell.get_attendance_master_info_by_coid_date(
+                         p_course_operation_id,
+                         p_attendance_date
+                     );
+
+    -- Check if master info retrieval was successful
+    IF v_master_info->>'status' = 'ERROR' THEN
+        RETURN jsonb_build_object(
+            'status',                'ERROR',
+            'message',               v_master_info->>'message',
+            'data',                  NULL,
+            'attendance_master_info', NULL
+        );
+    END IF;
+
+    -- Get all attendance records with student details
+    SELECT
+        jsonb_agg(
+            jsonb_build_object(
+                'id',                   ad.id,
+                'student_id',           ad.student_id,
+                'is_present',           ad.revised_present,
+                'attendance_master_id', ad.attendance_master_id,
+                'name',                 s.name,
+                'reg_no',               s.reg_no,
+                'roll_no',              s.roll_no
+            ) ORDER BY s.roll_no ASC
+        ),
+        COUNT(*)
+    INTO v_student_list, v_record_count
+    FROM ictcell.lms_class_attendance ad
+    INNER JOIN ictcell.lms_student s ON s.id = ad.student_id
+   
+    WHERE ad.attendance_master_id = (v_master_info->'data'->>'id')::TEXT;
+
+    -- Check if any records were found
+    IF v_student_list IS NULL OR v_record_count = 0 THEN
+        RETURN jsonb_build_object(
+            'status',                'ERROR',
+            'message',               'No attendance records found for the given class',
+            'data',                  jsonb_build_array(),
+            'attendance_master_info', v_master_info->'data'
+        );
+    END IF;
+
+    -- Return success with all records
+    RETURN jsonb_build_object(
+        'status',                'SUCCESS',
+        'message',               format('Successfully retrieved %s attendance record(s)', v_record_count),
+        'data',                  v_student_list,
+        'attendance_master_info', v_master_info->'data'
+    );
+
+EXCEPTION
+    WHEN OTHERS THEN
+        RETURN jsonb_build_object(
+            'status',                'ERROR',
+            'message',               'Failed to retrieve attendance records: ' || SQLERRM,
+            'data',                  NULL,
+            'attendance_master_info', NULL
+        );
+END;
+$BODY$;
+

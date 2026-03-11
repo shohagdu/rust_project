@@ -1,0 +1,99 @@
+CREATE OR REPLACE FUNCTION ictcell.get_attendance_class_list_coId_date(
+    p_course_operation_id TEXT,
+    p_attendance_date     DATE
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+AS $BODY$
+DECLARE
+    v_class_list    JSONB;
+    v_routine_info  JSONB;
+    v_record_count  INTEGER;
+    v_routine_count INTEGER;
+    v_day_name      TEXT;
+BEGIN
+    -- Input validation
+    IF p_course_operation_id IS NULL OR TRIM(p_course_operation_id) = ''
+       OR p_attendance_date IS NULL
+    THEN
+        RETURN jsonb_build_object(
+            'status',       'ERROR',
+            'message',      'Course Operation ID & Date is required',
+            'class_list',   NULL,
+            'routine_info', NULL
+        );
+    END IF;
+
+    -- Calculate day name (lowercase 3-letter: mon, tue, wed, ...)
+    v_day_name := LOWER(TO_CHAR(p_attendance_date, 'Dy'));
+
+    -- 1. Attendance records (আপনার আসল কোয়েরি)
+    SELECT 
+        jsonb_agg(
+            jsonb_build_object(
+                'id',             am.id,
+                'attendance_date',am.attendance_date,
+                'start_time',     am.start_time,
+                'end_time',       am.end_time
+                -- আরও ফিল্ড দরকার হলে এখানে যোগ করুন
+            ) ORDER BY am.attendance_date ASC, am.start_time ASC
+        ),
+        COUNT(*)
+    INTO v_class_list, v_record_count
+    FROM ictcell.lms_attendance_master am
+    WHERE am.course_operation_id::TEXT = p_course_operation_id
+      AND am.attendance_date::DATE = p_attendance_date;
+
+    -- 2. Class routine for that day (routine_info)
+    SELECT 
+        jsonb_agg(
+            jsonb_build_object(
+                'id',                  cr.id,
+                'course_operation_id', cr.course_operation_id,
+                'day_name',            cr.day_name,
+                'start_time',          cr.start_time,
+                'end_time',            cr.end_time
+                -- যদি আরও ফিল্ড থাকে → যেমন room, subject, teacher_id ইত্যাদি → এখানে যোগ করুন
+            ) ORDER BY cr.start_time ASC, cr.id ASC
+        ),
+        COUNT(*)
+    INTO v_routine_info, v_routine_count
+    FROM ictcell.lms_class_routine cr
+    WHERE cr.course_operation_id::TEXT = p_course_operation_id
+      AND cr.day_name = v_day_name;
+
+    -- Attendance না পেলে
+    IF v_class_list IS NULL OR v_record_count = 0 THEN
+        RETURN jsonb_build_object(
+            'status',       'ERROR',
+            'message',      'No attendance records found for the given class',
+            'class_list',   jsonb_build_array(),
+            'routine_info', COALESCE(v_routine_info, jsonb_build_array()),
+            'day_name',     v_day_name,
+            'routine_count', v_routine_count
+        );
+    END IF;
+
+    -- Success response – routine_info সবসময় থাকবে (ডাটা না থাকলেও খালি array)
+    RETURN jsonb_build_object(
+        'status',       'SUCCESS',
+        'message',      format('Successfully retrieved %s attendance record(s)', v_record_count),
+        'class_list',   COALESCE(v_class_list, jsonb_build_array()),
+        'routine_info', COALESCE(v_routine_info, jsonb_build_array()),
+        'day_name',     v_day_name,
+        'routine_count', v_routine_count,
+        'attendance_count', v_record_count
+    );
+
+EXCEPTION
+    WHEN OTHERS THEN
+        RETURN jsonb_build_object(
+            'status',       'ERROR',
+            'message',      'Failed to retrieve data: ' || SQLERRM,
+            'class_list',   NULL,
+            'routine_info', NULL
+        );
+END;
+$BODY$;
+
+SELECT ictcell.get_attendance_class_list_coId_date( '7125e00f-fba6-483b-8c09-740d3fc84f83','2026-02-24' );

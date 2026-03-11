@@ -1,0 +1,227 @@
+CREATE OR REPLACE FUNCTION ictcell.lecture_store(
+    p_course_operation UUID,
+    p_lecture_date DATE,
+    p_title TEXT,
+    p_links JSONB,
+    p_attachment_file JSONB,
+    p_created_at TIMESTAMP,
+    p_created_by TEXT,
+    p_created_ip TEXT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+AS $BODY$
+DECLARE
+    new_id UUID;
+BEGIN
+    new_id := gen_random_uuid();
+    
+    INSERT INTO ictcell.lms_lectures (id,course_operation_id, lecture_date, title,links,attachment_file,created_at,created_by,created_ip) 
+    VALUES (new_id, p_course_operation, p_Lecture_date, p_title,p_links,p_attachment_file,p_created_at,p_created_by,p_created_ip);
+    
+    RETURN jsonb_build_object(
+        'status', 'SUCCESS',
+        'message', 'Successfully inserted information',
+        'data', jsonb_build_object(
+            'id', new_id::TEXT
+        )
+    );
+EXCEPTION
+    WHEN OTHERS THEN
+        RETURN jsonb_build_object(
+            'status', 'ERROR',
+            'message', 'Failed to insert information: ' || SQLERRM,
+            'data', ''
+        );
+END;
+$BODY$;
+
+
+
+CREATE OR REPLACE FUNCTION ictcell.lecture_record_by_course_opeation(
+	p_course_operation_id TEXT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+AS $BODY$
+DECLARE
+    v_lecture_list JSONB;
+	v_lecture_count INTEGER;
+BEGIN
+    -- Validate input parameter
+    IF p_course_operation_id IS NULL OR p_course_operation_id = '' THEN
+        RETURN jsonb_build_object(
+            'status', 'ERROR',
+            'message', 'Course Operation ID is required',
+            'data', NULL
+        );
+    END IF;
+   -- Get all attendance records with student details
+    SELECT 
+        jsonb_agg(
+            jsonb_build_object(
+                'id', lec.id,
+                'lecture_date', lec.lecture_date,
+                'title', lec.title,
+                'links', lec.links,
+                'attachment_file', lec.attachment_file
+            ) ORDER BY lec.lecture_date ASC
+        ),
+        COUNT(*)
+    INTO v_lecture_list, v_lecture_count
+    FROM ictcell.lms_lectures lec
+    WHERE lec.id::TEXT = p_course_operation_id AND is_active =1;
+    
+    -- Check if any records were found
+    IF v_lecture_list IS NULL OR v_lecture_count = 0 THEN
+        RETURN jsonb_build_object(
+            'status', 'ERROR',
+            'message', 'No Lecture records found for the given course operation',
+            'data', jsonb_build_array()
+        );
+    END IF;
+    
+    -- Return success with all records
+    RETURN jsonb_build_object(
+        'status', 'SUCCESS',
+        'message', format('Successfully retrieved %s lecture record(s)', v_lecture_count),
+        'data', v_lecture_list
+    );
+EXCEPTION
+    WHEN OTHERS THEN
+        RETURN jsonb_build_object(
+            'status', 'ERROR',
+            'message', 'Failed to retrieve lecture records: ' || SQLERRM,
+            'data', NULL
+        );
+END;
+$BODY$;
+
+
+-- Delete
+CREATE OR REPLACE FUNCTION ictcell.lecture_delete(
+	p_id TEXT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+AS $BODY$
+DECLARE 
+    v_lecture_exists BOOLEAN;
+    v_deleted_lecture JSONB;
+BEGIN
+    -- Validate input parameter
+    IF p_id IS NULL OR p_id = '' THEN
+        RETURN jsonb_build_object(
+            'status', 'ERROR',
+            'message', 'Lecture  ID is required',
+            'data', NULL
+        );
+    END IF;
+
+    -- Check if Lecture exists
+    SELECT EXISTS(
+        SELECT 1 
+        FROM ictcell.lms_lectures  
+        WHERE id::TEXT = p_id
+    ) INTO v_lecture_exists;
+    
+    IF NOT v_lecture_exists THEN
+        RETURN jsonb_build_object(
+            'status', 'ERROR',
+            'message', 'Lecture Information not found',
+            'data', NULL
+        );
+    END IF;
+
+  
+
+    -- Store the Lecture data before deletion (for return value)
+    SELECT row_to_json(lec)::JSONB INTO v_deleted_lecture
+    FROM ictcell.lms_lectures lec
+    WHERE id::TEXT = p_id;
+
+    -- Delete the course operation record
+    UPDATE  ictcell.lms_lectures  SET is_active = 0 
+    WHERE id::TEXT = p_id;
+    
+    -- Return success response
+    RETURN jsonb_build_object(
+        'status', 'SUCCESS',
+        'message', 'Course operation deleted successfully',
+        'data', v_deleted_lecture
+    );
+
+EXCEPTION
+    WHEN OTHERS THEN
+        RETURN jsonb_build_object(
+            'status', 'ERROR',
+            'message', 'Failed to delete course operation: ' || SQLERRM,
+            'data', NULL
+        );
+END;
+$BODY$;
+
+--- Update Lecture information
+CREATE OR REPLACE FUNCTION ictcell.lecture_update(
+    p_lecture_id UUID,
+    p_course_operation UUID,
+    p_lecture_date DATE,
+    p_title TEXT,
+    p_links JSONB,
+    p_attachment_file JSONB,
+    p_updated_at TIMESTAMPTZ DEFAULT NOW(),
+    p_updated_by TEXT,
+    p_updated_ip TEXT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+AS $BODY$
+BEGIN
+    -- Update the lecture
+    UPDATE ictcell.lms_lectures
+    SET
+        course_operation_id = p_course_operation,
+        lecture_date        = p_lecture_date,
+        title               = p_title,
+        links               = p_links,
+        attachment_file     = p_attachment_file,
+        updated_at          = p_updated_at,
+        updated_by          = p_updated_by,
+        updated_ip          = p_updated_ip
+    WHERE id = p_lecture_id;
+
+    -- Check if any row was updated
+    IF FOUND THEN
+        RETURN jsonb_build_object(
+            'status', 'SUCCESS',
+            'message', 'Lecture information updated successfully',
+            'data', jsonb_build_object(
+                'id', p_lecture_id::TEXT
+            )
+        );
+    ELSE
+        RETURN jsonb_build_object(
+            'status', 'ERROR',
+            'message', 'Lecture ID not found',
+            'data', NULL
+        );
+    END IF;
+
+EXCEPTION
+    WHEN OTHERS THEN
+        RETURN jsonb_build_object(
+            'status', 'ERROR',
+            'message', 'Failed to update lecture: ' || SQLERRM,
+            'data', NULL
+        );
+END;
+$BODY$;
+
+
+
+
+
+
+
+
+
